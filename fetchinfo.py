@@ -55,19 +55,19 @@ def printtokens(node):
     stack = []
     current = node
     index = 0
-    while current != None:
+    while current:
         if current.numChildren() == 0 and isinstance(current, ClangToken):
             token = current
             try:
-                tokenString = token.toString()
-                print(current.toString())
-                if (tokenString not in dic) and ("local" in tokenString or "param" in tokenString):
-                    dic[current.toString()] = []
-                insAddr = token.getPcodeOp().getSeqnum().getTarget().toString()
-                print(insAddr)
-                temp = dic[tokenString]
-                if (insAddr not in temp):
-                    dic[tokenString] = dic[tokenString].append(temp)
+                tokenString = str(token)
+                # print(tokenString)
+                # print(current.toString())
+                if (tokenString not in dic):
+                    dic[str(current)] = set()
+                    # print(dic)
+                insAddr = str(token.getPcodeOp().getSeqnum().getTarget())
+                # print(insAddr)
+                dic[tokenString].add(insAddr)
             except:
                 pass
             current = current.Parent()
@@ -160,6 +160,8 @@ for function in functions:
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            # print(inst.getResultObjects())
+            # print(inst.getPcode())
             print("{} {}".format(cur, inst))
             if str(inst) == "RET":
                 break
