@@ -154,5 +154,12 @@ for function in functions:
     print(entrypoint)
     printtokens(tokengrp.getCCodeMarkup())
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
-# for instruction in currentProgram.getListing().InstructionIterator():
-#     print(instruction)
+    # for instruction in currentProgram.getListing().InstructionIterator():
+    #     print(instruction)
+    inst = getInstructionAt(entrypoint)
+    print(inst)
+    while inst:
+        inst = inst.getNext()
+        print(inst)
+        if str(inst) == "RET":
+            break
