@@ -156,10 +156,11 @@ for function in functions:
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
     # for instruction in currentProgram.getListing().InstructionIterator():
     #     print(instruction)
-    inst = getInstructionAt(entrypoint)
-    print(inst)
-    while inst:
-        inst = inst.getNext()
-        print("{} {}".format(inst.getDefaultFallThrough(), inst))
-        if str(inst) == "RET":
-            break
+    cur = entrypoint
+    while cur:
+        inst = getInstructionAt(cur)
+        if inst:
+            print("{} {}".format(cur, inst))
+            if str(inst) == "RET":
+                break
+        cur = cur.next()
