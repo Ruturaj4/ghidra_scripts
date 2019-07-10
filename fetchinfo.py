@@ -160,6 +160,6 @@ for function in functions:
     print(inst)
     while inst:
         inst = inst.getNext()
-        print(inst)
+        print("{} {}".format(inst.getDefaultFallThrough(), inst))
         if str(inst) == "RET":
             break
