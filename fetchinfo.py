@@ -38,7 +38,7 @@ print(program)
 minAddress = currentProgram.getMinAddress()
 listing = currentProgram.getListing()
 codeUnit = listing.getCodeUnitAt(minAddress)
-print(listing)
+print(codeUnit)
 # set the filename to store the output text file
 # change this to your preferable location
 # filename = "/projects/zephyr/Ruturaj/ghidra_learning/" + program.getName() + ".txt"
@@ -49,41 +49,43 @@ decompinterface = DecompInterface()
 # open the program to decompile using the particular object
 decompinterface.openProgram(program);
 
-def printtokens(node):
-    # let's define a dictionary here
-    dic = {}
-    stack = []
-    current = node
-    index = 0
-    while current:
-        if current.numChildren() == 0 and isinstance(current, ClangToken):
-            token = current
-            try:
-                tokenString = str(token)
-                # print(tokenString)
-                # print(current.toString())
-                if (tokenString not in dic):
-                    dic[str(current)] = set()
-                    # print(dic)
-                insAddr = str(token.getPcodeOp().getSeqnum().getTarget())
-                # print(insAddr)
-                dic[tokenString].add(insAddr)
-            except:
-                pass
-            current = current.Parent()
-            index = stack.pop()
-            index += 1
-        else:
-            if index == current.numChildren():
-                current = current.Parent()
-                if stack:
-                    index = stack.pop()
-                index += 1
-            else:
-                current = current.Child(index)
-                stack.append(index)
-                index = 0
-    print(dic)
+# def printtokens(variables, node):
+#     # This contains a list of all the variables corresponding to the function
+#     var_list = [variable.getName() for variable in variables]
+#     # let's define a dictionary here
+#     dic = {}
+#     stack = []
+#     current = node
+#     index = 0
+#     while current:
+#         if current.numChildren() == 0 and isinstance(current, ClangToken):
+#             try:
+#                 tokenString = str(current)
+#                 # print(current.toString())
+#                 if (tokenString not in dic):
+#                     dic[str(current)] = set()
+#                     # print(dic)
+#                 insAddr = str(current.getPcodeOp().getSeqnum().getTarget())
+#                 # print(insAddr)
+#                 dic[tokenString].add(insAddr)
+#             except:
+#                 pass
+#             current = current.Parent()
+#             index = stack.pop()
+#             index += 1
+#         else:
+#             if index == current.numChildren():
+#                 current = current.Parent()
+#                 if stack:
+#                     index = stack.pop()
+#                 index += 1
+#             else:
+#                 current = current.Child(index)
+#                 stack.append(index)
+#                 index = 0
+#     print(dic)
+    # if cur.numChildren() == 0 and isinstance(cur, ClangToken):
+    #     print("node: {}".format(cur.getPcodeOp().getSeqnum().getTarget()))
 
 # This function predicts the varible datatypes
 def predictdtype(variable, parameters):
@@ -106,8 +108,9 @@ def predictownertype(variable, dtype):
 # prints varible names along with some other information
 def printvariable(variables, parameters):
     with open("test.txt", "a") as f:
+        f.write("\n")
         for variable in variables:
-            print("variable: {}".format(variable))
+            # print("variable: {}".format(variable))
             # get the offset of the varible on the stack
             offset = variable.getStackOffset()
             # get the varibale data type
@@ -127,6 +130,26 @@ def printvariable(variables, parameters):
             f.write(str(start) + "\n")
         f.write("\n")
 
+# This functions predicts the variables in the instructions
+def predictvar(entrypoint, variables):
+    cur = entrypoint
+    offsets = {hex(variable.getStackOffset() + 8):variable.getName() for variable in variables}
+    print("Offset: {}".format(offsets))
+    while cur:
+        inst = getInstructionAt(cur)
+        if inst:
+            # print(inst.getResultObjects())
+            # print(inst.getPcode())
+            print("{} {}".format(cur, inst))
+            detect = [offset for offset in offsets if str(offset) in str(inst)]
+            if detect:
+                print("{} {}".format(cur, offsets[detect[0]]))
+                with open("test.txt", "a") as f:
+                    f.write("{} {}\n".format(cur, offsets[detect[0]]))
+            if str(inst) == "RET":
+                break
+        cur = cur.next()
+
 # get the function iterator object
 functions = program.getFunctionManager().getFunctions(True);
 # Get the functions having a call stack
@@ -141,28 +164,20 @@ for function in functions:
     with open("test.txt", "a") as f:
         f.write(function.getName() + "\n")
         # The stack size is 8 bytes more when using ghidra, hence reducing the size
-        f.write(str(function.getStackFrame().getFrameSize() - 8) + "\n\n")
+        f.write(str(function.getStackFrame().getFrameSize() - 8) + "\n")
     print("frame size: {}".format(function.getStackFrame().getFrameSize()))
+    # get the starting address of the function
     entrypoint = function.getEntryPoint()
     tokengrp = decompinterface.decompileFunction(function, 0, ConsoleTaskMonitor())
     print(tokengrp.getCCodeMarkup())
     print(list(function.getParameters()))
     # print varibale names
     parameters = list(function.getParameters())
-    printvariable(list(function.getStackFrame().getStackVariables()), parameters)
+    variables = list(function.getStackFrame().getStackVariables())
+    predictvar(entrypoint, variables)
+    printvariable(variables, parameters)
     print(currentProgram.getListing().getNumCodeUnits())
-    print(entrypoint)
-    printtokens(tokengrp.getCCodeMarkup())
+    # printtokens(list(function.getStackFrame().getStackVariables()), tokengrp.getCCodeMarkup())
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
     # for instruction in currentProgram.getListing().InstructionIterator():
     #     print(instruction)
-    cur = entrypoint
-    while cur:
-        inst = getInstructionAt(cur)
-        if inst:
-            # print(inst.getResultObjects())
-            # print(inst.getPcode())
-            print("{} {}".format(cur, inst))
-            if str(inst) == "RET":
-                break
-        cur = cur.next()
