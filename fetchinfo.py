@@ -49,52 +49,17 @@ decompinterface = DecompInterface()
 # open the program to decompile using the particular object
 decompinterface.openProgram(program);
 
-# def printtokens(variables, node):
-#     # This contains a list of all the variables corresponding to the function
-#     var_list = [variable.getName() for variable in variables]
-#     # let's define a dictionary here
-#     dic = {}
-#     stack = []
-#     current = node
-#     index = 0
-#     while current:
-#         if current.numChildren() == 0 and isinstance(current, ClangToken):
-#             try:
-#                 tokenString = str(current)
-#                 # print(current.toString())
-#                 if (tokenString not in dic):
-#                     dic[str(current)] = set()
-#                     # print(dic)
-#                 insAddr = str(current.getPcodeOp().getSeqnum().getTarget())
-#                 # print(insAddr)
-#                 dic[tokenString].add(insAddr)
-#             except:
-#                 pass
-#             current = current.Parent()
-#             index = stack.pop()
-#             index += 1
-#         else:
-#             if index == current.numChildren():
-#                 current = current.Parent()
-#                 if stack:
-#                     index = stack.pop()
-#                 index += 1
-#             else:
-#                 current = current.Child(index)
-#                 stack.append(index)
-#                 index = 0
-#     print(dic)
-    # if cur.numChildren() == 0 and isinstance(cur, ClangToken):
-    #     print("node: {}".format(cur.getPcodeOp().getSeqnum().getTarget()))
+# A dictionary to store the varible metadata
+# varmetada = {owner:{parameter:value}}
+varmetada = {}
 
 # This function predicts the varible datatypes
-def predictdtype(variable, parameters):
+def predictdtype(dtype, variable, parameters):
     for parameter in parameters:
         if parameter.getLength() == variable.getLength():
             dtype = parameter.getDataType()
             parameters.remove(parameter)
             break
-    print(dtype)
     return dtype, parameters
 
 def predictownertype(variable, dtype):
@@ -107,28 +72,21 @@ def predictownertype(variable, dtype):
 
 # prints varible names along with some other information
 def printvariable(variables, parameters):
-    with open("test.txt", "a") as f:
-        f.write("\n")
-        for variable in variables:
-            # print("variable: {}".format(variable))
-            # get the offset of the varible on the stack
-            offset = variable.getStackOffset()
-            # get the varibale data type
-            dtype = variable.getDataType()
-            if "undefined" in str(dtype):
-                dtype, parameters = predictdtype(variable, parameters)
-            # get the ownertype
-            owner = predictownertype(variable, dtype)
-            # get the varibale name/ owner
-            varname = variable.getName()
-            # start point on the stack
-            start = variable.getLength()
-            f.write(str(offset + 8) + " ")
-            f.write(str(dtype).replace(" ", "") + " ")
-            f.write(owner + " ")
-            f.write(str(varname) + " ")
-            f.write(str(start) + "\n")
-        f.write("\n")
+    for variable in variables:
+        # print("variable: {}".format(variable))
+        # get the offset of the varible on the stack
+        offset = variable.getStackOffset()
+        # get the varibale data type
+        dtype = variable.getDataType()
+        if "undefined" in str(dtype):
+            dtype, parameters = predictdtype(dtype, variable, parameters)
+        # get the ownertype
+        owner = predictownertype(variable, dtype)
+        # get the varibale name/ owner
+        varname = variable.getName()
+        # size of the variable
+        size = variable.getLength()
+        varmetada[str(varname)] = {"offset":offset + 8, "dtype":str(dtype).replace(" ", ""), "owner":owner, "size":size}
 
 # This functions predicts the variables in the instructions
 def predictvar(entrypoint, variables):
@@ -143,9 +101,34 @@ def predictvar(entrypoint, variables):
             print("{} {}".format(cur, inst))
             detect = [offset for offset in offsets if str(offset) in str(inst)]
             if detect:
-                print("{} {}".format(cur, offsets[detect[0]]))
-                with open("test.txt", "a") as f:
-                    f.write("{} {}\n".format(cur, offsets[detect[0]]))
+                # if there is only one memory operand
+                if len(detect) == 1:
+                    # print(varmetada)
+                    if varmetada[str(offsets[detect[0]])]["owner"] == "pointer" and inst.getRegister(0):
+                        reg = str(inst.getRegister(0).getBaseRegister())
+                        next = inst.getNext()
+                        while next:
+                            print(next)
+                            print(reg)
+                            if str(next.getRegister(0).getBaseRegister()) == reg:
+                                try:
+                                    # check when the register containing pointer has been used in
+                                    # future instructions
+                                    print(str(next).split(","))
+                                    if reg in str(next).split(",")[-1]:
+                                        break
+                                except:
+                                    pass
+                                next = next.getNext()
+                            else:
+                                break
+                        with open("test.txt", "a") as f:
+                            f.write("{} {}\n".format(str(next.getNext().getFallFrom()).lstrip("0"), offsets[detect[0]]))
+                        cur = cur.next()
+                        continue
+                    if not str(inst).split()[0] == "LEA":
+                        with open("test.txt", "a") as f:
+                            f.write("{} {}\n".format(str(cur).lstrip("0"), offsets[detect[0]]))
             if str(inst) == "RET":
                 break
         cur = cur.next()
@@ -174,10 +157,19 @@ for function in functions:
     # print varibale names
     parameters = list(function.getParameters())
     variables = list(function.getStackFrame().getStackVariables())
-    predictvar(entrypoint, variables)
+
     printvariable(variables, parameters)
+    predictvar(entrypoint, variables)
+    with open("test.txt", "a") as f:
+        f.write("\n")
+        for k in varmetada:
+            f.write(str(varmetada[k]["offset"]) + " ")
+            f.write(varmetada[k]["dtype"] + " ")
+            f.write(varmetada[k]["owner"] + " ")
+            f.write(k + " ")
+            f.write(str(varmetada[k]["size"]) + "\n")
+        f.write("\n")
+    varmetada = {}
     print(currentProgram.getListing().getNumCodeUnits())
     # printtokens(list(function.getStackFrame().getStackVariables()), tokengrp.getCCodeMarkup())
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
-    # for instruction in currentProgram.getListing().InstructionIterator():
-    #     print(instruction)
