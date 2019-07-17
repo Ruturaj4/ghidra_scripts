@@ -77,9 +77,10 @@ def printvariable(variables, parameters):
         # get the offset of the varible on the stack
         offset = variable.getStackOffset()
         # get the varibale data type
-        dtype = variable.getDataType()
-        if "undefined" in str(dtype):
-            dtype, parameters = predictdtype(dtype, variable, parameters)
+        dtype = variable.getDataType().getDisplayName()
+        # if "undefined" in str(dtype):
+        #     dtype, parameters = predictdtype(dtype, variable, parameters)
+        # print("dtype: {}".format(dtype.getDisplayName()))
         # get the ownertype
         owner = predictownertype(variable, dtype)
         # get the varibale name/ owner
@@ -91,7 +92,13 @@ def printvariable(variables, parameters):
 # This functions predicts the variables in the instructions
 def predictvar(entrypoint, variables):
     cur = entrypoint
-    offsets = {hex(variable.getStackOffset() + 8):variable.getName() for variable in variables}
+    offsets = {}
+    # offsets = {hex(variable.getStackOffset() + 8):variable.getName() for variable in variables}
+    for variable in variables:
+        if "-" in str(hex(variable.getStackOffset() + 8)):
+            offsets[str(hex(variable.getStackOffset() + 8)) + "]"] = variable.getName()
+        else:
+            offsets[str(hex(variable.getStackOffset() + 8)) + "]"] = variable.getName()
     print("Offset: {}".format(offsets))
     while cur:
         inst = getInstructionAt(cur)
@@ -99,36 +106,44 @@ def predictvar(entrypoint, variables):
             # print(inst.getResultObjects())
             # print(inst.getPcode())
             print("{} {}".format(cur, inst))
-            detect = [offset for offset in offsets if str(offset) in str(inst)]
+            detect = [offset for offset in offsets if offset in str(inst)]
             if detect:
+                print(detect)
                 # if there is only one memory operand
                 if len(detect) == 1:
                     # print(varmetada)
-                    if varmetada[str(offsets[detect[0]])]["owner"] == "pointer" and inst.getRegister(0):
-                        reg = str(inst.getRegister(0).getBaseRegister())
-                        next = inst.getNext()
-                        while next:
-                            print(next)
-                            print(reg)
-                            if str(next.getRegister(0).getBaseRegister()) == reg:
-                                try:
-                                    # check when the register containing pointer has been used in
-                                    # future instructions
-                                    print(str(next).split(","))
-                                    if reg in str(next).split(",")[-1]:
-                                        break
-                                except:
-                                    pass
-                                next = next.getNext()
-                            else:
-                                break
-                        with open("test.txt", "a") as f:
-                            f.write("{} {}\n".format(str(next.getNext().getFallFrom()).lstrip("0"), offsets[detect[0]]))
+                    try:
+                        if varmetada[str(offsets[detect[0]])]["owner"] == "pointer" and inst.getRegister(0):
+                            print(inst.getRegister(0))
+                            reg = str(inst.getRegister(0).getBaseRegister())
+                            next = inst.getNext()
+                            while next:
+                                print(next)
+                                print(reg)
+                                if str(next.getRegister(0).getBaseRegister()) == reg:
+                                    try:
+                                        # check when the register containing pointer has been used in
+                                        # future instructions
+                                        print(str(next).split(","))
+                                        if reg in str(next).split(",")[-1]:
+                                            break
+                                    except:
+                                        pass
+                                    next = next.getNext()
+                                else:
+                                    break
+                            with open("test.txt", "a") as f:
+                                f.write("{} {}\n".format(str(next.getNext().getFallFrom()).lstrip("0"), offsets[detect[0]]))
+                            cur = cur.next()
+                            continue
+                    except:
+                        # if arg 0 is not a register
                         cur = cur.next()
                         continue
-                    if not str(inst).split()[0] == "LEA":
-                        with open("test.txt", "a") as f:
-                            f.write("{} {}\n".format(str(cur).lstrip("0"), offsets[detect[0]]))
+                # the conditions to satisfy before printing
+                if not str(inst).split()[0] == "LEA":
+                    with open("test.txt", "a") as f:
+                        f.write("{} {}\n".format(str(cur).lstrip("0"), offsets[detect[0]]))
             if str(inst) == "RET":
                 break
         cur = cur.next()
