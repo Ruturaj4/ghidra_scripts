@@ -30,6 +30,41 @@ from ghidra.program.model.block import BasicBlockModel
 from ghidra.program.model.data import Structure
 from ghidra.program.model.data import StructureDataType
 
+# for static blocks
+blockiterator = BasicBlockModel(currentProgram).getCodeBlocks(monitor)
+fun_blocks = {}
+
+def add_block(function, block):
+    if function not in fun_blocks:
+         fun_blocks[function] = []
+    fun_blocks[function].append(block)
+
+# For each block, look through the function list until we find a match
+# This is terribly inefficient (O(N^2))
+
+def basicblocks():
+    while blockiterator.hasNext():
+        cur_block = blockiterator.next().getMinAddress()
+        function = getFirstFunction()
+        found = False
+
+        # Search functions until we find a match or run out of functions
+        while function is not None:
+            b = function.getBody()
+            if b.contains(cur_block):
+                add_block(function.getName(), cur_block)
+                found=True
+                break
+
+            # Update function to next and loop again
+            function = getFunctionAfter(function)
+
+        # Done searching functions. If we never found it, add to unknown list
+        if not found:
+            add_block("_unknown", cur_block)
+
+basicblocks()
+
 # commandline args given to the script
 # array(java.lang.String, [u'fdf sdf df****])
 args = getScriptArgs()
@@ -81,7 +116,7 @@ def predictownertype(prefix):
 # this can be modified later in case, registers need to be tracked
 
 # prints varible names along with some other information
-def printvariable(variables, parameters):
+def printvariable(variables, parameters, fun_name):
     print(variables)
     for variable in variables:
         # print("variable: {}".format(variable))
@@ -119,13 +154,23 @@ def printvariable(variables, parameters):
                     print(ref.getToAddress().getOffset())
                     print(ref.getReferenceType())
                     if struct_var == ref.getToAddress().getOffset():
+                        if str(ref.getReferenceType()) == "DATA":
+                            continue
+                        if str(ref.getReferenceType()) == "READ" and owner == "scalar":
+                            continue
+                        if str(ref.getReferenceType()) == "READ" and owner == "pointer":
+                            register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
+                            predictvar(ref.getFromAddress().next(), struct_vars[struct_var], register, fun_name)
+                            continue
                         with open("test.txt", "a") as f:
-                            f.write(str(ref.getFromAddress()) + " " + struct_vars[struct_var] + "\n")
+                            f.write(str(ref.getFromAddress()).lstrip("0") + " " + struct_vars[struct_var] + "\n")
+                    elif owner == "array":
+                        with open("test.txt", "a") as f:
+                            f.write(str(ref.getFromAddress()).lstrip("0") + " " + struct_vars[struct_var] + "\n")
             continue
         except:
             for ref in refmanager.getReferencesTo(variable):
                 # checks to avoid the accesses
-                # TODO: same check needed for the pointer
                 print(ref)
                 if str(ref.getReferenceType()) == "DATA":
                     continue
@@ -133,52 +178,75 @@ def printvariable(variables, parameters):
                     continue
                 if str(ref.getReferenceType()) == "READ" and owner == "pointer":
                     register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
-                    print(register)
-                    predictvar(ref.getFromAddress().next(), variable.getName(), register)
+                    predictvar(ref.getFromAddress().next(), variable.getName(), register, fun_name)
                     continue
                 print(ref.getReferenceType())
                 print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
                 with open("test.txt", "a") as f:
-                    f.write(str(ref.getFromAddress()) + " " + variable.getName() + "\n")
+                    f.write(str(ref.getFromAddress()).lstrip("0") + " " + variable.getName() + "\n")
 
         # get the varibale name/ owner
         varname = variable.getName()
-        print("TYPE::::::::::::::::::::::::::::")
-        print(variable.getSymbol())
         # size of the variable
         size = variable.getLength()
         varmetada[str(varname)] = {"offset":offset + 8, "dtype":str(dtype).replace(" ", ""), "owner":owner, "size":size}
 
-def instPrint(entrypoint):
+# This function is used to predict the arrays
+def predictarrvar(entrypoint):
     cur = entrypoint
+    # varmetada with offset as keys and variable name as values
+    offsetvarmetada = {v["offset"]:k for k,v in varmetada.iteritems()}
+
     while cur:
         inst = getInstructionAt(cur)
         if inst:
-            print("Number of operands: {}".format(inst.getNumOperands()))
-            for i in inst.getPcode():
-                print(i.getMnemonic())
-            print("inst: {}".format(inst))
             if str(inst) == "RET":
                 break
+            if not inst.getNumOperands() == 2 or not inst.getMnemonicString() == "MOV":
+                cur = cur.next()
+                continue
+            if all(x in [str(i.getMnemonic()) for i in inst.getPcode()] for x in ['INT_ADD', 'COPY']):
+                # for the store instruction
+                if len(inst.getOpObjects(0)) >= 3:
+                    for off in offsetvarmetada:
+                        print(hex(off))
+                        if hex(off) in [str(x) for x in inst.getOpObjects(0)]:
+                            with open("test.txt", "a") as f:
+                                f.write(str(cur).lstrip("0") + " " + offsetvarmetada[off] + "\n")
+                # for the load instruction
+                if len(inst.getOpObjects(1)) >= 3:
+                    for off in offsetvarmetada:
+                        if hex(off) in [str(x) for x in inst.getOpObjects(1)]:
+                            with open("test.txt", "a") as f:
+                                f.write(str(cur).lstrip("0") + " " + offsetvarmetada[off] + "\n")
         cur = cur.next()
-# This functions predicts the variables in the instructions
-def predictvar(entrypoint, name, register):
+
+# This function is used to predict the pointers
+def predictvar(entrypoint, name, register, fun_name):
     print("####################")
+    print(fun_blocks[fun_name])
+    print(entrypoint)
+    add = "ffffffff"
+    for block in fun_blocks[fun_name]:
+        if (block > entrypoint):
+            add = block
+            break
     regs = [register]
     cur = entrypoint
-    print(name)
     # offsets = {}
     # offsets = {variable.getName():hex(variable.getStackOffset() + 8) for variable in variables}
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            # quit if new static block
+            if cur >= add:
+                break
+            if str(inst) == "RET":
+                break
             # If the mnemonic is any of these, then don't proceed
             if inst.getMnemonicString() == "PUSH" or inst.getMnemonicString() == "CALL":
                 cur = cur.next()
                 continue
-            print("mnemonic: {}".format(inst.getMnemonicString()))
-            print("Number of operands: {}".format(inst.getNumOperands()))
-            print(inst.getScalar(1))
             inst_info = [str(i.getMnemonic()) for i in inst.getPcode()]
             print(inst_info)
             # stop the look for any load in the
@@ -201,7 +269,7 @@ def predictvar(entrypoint, name, register):
                         decision = list(set(regs) & set(registers))
                         if decision:
                             with open("test.txt", "a") as f:
-                                f.write(str(cur) + " " + name + "\n")
+                                f.write(str(cur).lstrip("0") + " " + name + "\n")
                         break
             # if there is a store, then print
             elif "STORE" in inst_info:
@@ -221,7 +289,7 @@ def predictvar(entrypoint, name, register):
                         decision = list(set(regs) & set(registers))
                         if decision:
                             with open("test.txt", "a") as f:
-                                f.write(str(cur) + " " + name + "\n")
+                                f.write(str(cur).lstrip("0") + " " + name + "\n")
             # if their is a register copy
             elif "COPY" in inst_info and len(inst_info) == 1:
                 if inst.getRegister(1):
@@ -233,9 +301,6 @@ def predictvar(entrypoint, name, register):
             # for ref in list(getReferencesFrom(cur)):
             #     print(refmanager.getReferencedVariable(ref))
             # print(getCodeUnitFormat().getRepresentationString(inst))
-
-            if str(inst) == "RET":
-                break
         cur = cur.next()
     print("####################")
 
@@ -250,6 +315,8 @@ with open("test.txt", "w") as f:
 for function in functions:
     # Write the function name
     print(function.getName())
+    # compute the basic building blocks
+    print(fun_blocks[function.getName()])
     with open("test.txt", "a") as f:
         f.write(function.getName() + "\n")
         # The stack size is 8 bytes more when using ghidra, hence reducing the size
@@ -264,9 +331,11 @@ for function in functions:
     parameters = list(function.getParameters())
     variables = list(function.getStackFrame().getStackVariables())
     print("loc: {}".format(list(function.getLocalVariables())))
-    printvariable(variables, parameters)
-    # instPrint(entrypoint)
+    printvariable(variables, parameters, function.getName())
     # predictvar(entrypoint, variables)
+    # predict the dynamic array accesses like
+    # mov DWORD PTR [rbp+rax*4-0x30],edx
+    predictarrvar(entrypoint)
     with open("test.txt", "a") as f:
         f.write("\n")
         for k in varmetada:
@@ -278,5 +347,6 @@ for function in functions:
         f.write("\n")
     varmetada = {}
     print(currentProgram.getListing().getNumCodeUnits())
+
     # printtokens(list(function.getStackFrame().getStackVariables()), tokengrp.getCCodeMarkup())
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
