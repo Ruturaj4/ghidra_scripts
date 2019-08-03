@@ -106,6 +106,10 @@ def predictdtype(dtype, variable, parameters):
     return dtype, owner, parameters
 
 def predictownertype(prefix):
+    print("prefix: {}".format(prefix))
+    # special case for a pointer array
+    if str(prefix) == "PTR_ARRAY":
+        return "array"
     if "PTR" in str(prefix):
         return "pointer"
     elif "ARRAY" in str(prefix):
@@ -177,6 +181,8 @@ def printvariable(variables, parameters, fun_name):
                 if str(ref.getReferenceType()) == "READ" and owner == "scalar":
                     continue
                 if str(ref.getReferenceType()) == "READ" and owner == "pointer":
+                    if not getInstructionAt(ref.getFromAddress()).getMnemonicString() == "MOV":
+                        continue
                     register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
                     predictvar(ref.getFromAddress().next(), variable.getName(), register, fun_name)
                     continue
@@ -304,6 +310,25 @@ def predictvar(entrypoint, name, register, fun_name):
         cur = cur.next()
     print("####################")
 
+def predictGlobals(entrypoint):
+    cur = entrypoint
+    print("^^^^^^^^^^^^^^")
+    while cur:
+        inst = getInstructionAt(cur)
+        if inst:
+            # quit if new static block
+            if str(inst) == "RET":
+                break
+            print(inst)
+            for ref in list(getReferencesFrom(cur)):
+                print(ref.	getToAddress())
+                print(ref)
+                print(refmanager.getReferencedVariable(ref))
+                print("###############")
+        cur = cur.next()
+    print("^^^^^^^^^^^^^^")
+
+
 # get the function iterator object
 functions = program.getFunctionManager().getFunctions(True)
 # Get the functions having a call stack
@@ -345,8 +370,35 @@ for function in functions:
             f.write(k + " ")
             f.write(str(varmetada[k]["size"]) + "\n")
         f.write("\n")
+    print(varmetada)
     varmetada = {}
-    print(currentProgram.getListing().getNumCodeUnits())
-
+    # print(program.	getTreeManager().	getTreeNames())
+    for s in (list(program.getSymbolTable().	getAllSymbols(True))):
+        # or if	getParentNamespace() == function
+        # if str(s.getParentSymbol()) == str(function):
+        #     print(s)
+        #     print(s.getAddress())
+        #     print(list(refmanager.getReferencesTo(s.getAddress())))
+        #     print(s.getReferences())
+        #     print(s.getObject().getDataType())
+        #     print(s.getPath())
+        # instructions to be referenced from the global variables
+        ref_instructions = [getInstructionAt(x.getFromAddress()) for x in s.getReferences()]
+        if ref_instructions and not None in ref_instructions:
+            try:
+                #getInstructionAt(
+                print("datatype: {}".format(s.getObject().getDataType()))
+                print([getInstructionAt(x.getFromAddress()) for x in s.getReferences()])
+                if s.getObject().getParent():
+                    print(s.getObject().getParent())
+                    print(s.getObject().getParent().getPathName())
+                print(s.getPath())
+                print("\n")
+            except:
+                pass
+    predictGlobals(entrypoint)
+    print(list(program.getSymbolTable().getDefinedSymbols()))
+    # print(list(currentProgram.getSymbolTable().	getChildren(currentProgram.getSymbolTable().getNamespace(entrypoint).	getSymbol())))
+    # print(list(currentProgram.getSymbolTable().	getSymbols(currentProgram.getSymbolTable().getNamespace(entrypoint).	getParentNamespace())))
     # printtokens(list(function.getStackFrame().getStackVariables()), tokengrp.getCCodeMarkup())
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
