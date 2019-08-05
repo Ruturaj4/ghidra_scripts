@@ -64,7 +64,6 @@ def basicblocks():
             add_block("_unknown", cur_block)
 
 basicblocks()
-
 # commandline args given to the script
 # array(java.lang.String, [u'fdf sdf df****])
 args = getScriptArgs()
@@ -93,6 +92,11 @@ decompinterface.openProgram(program);
 # A dictionary to store the varible metadata
 # varmetada = {owner:{parameter:value}}
 varmetada = {}
+# A dictionary to store addresses and references
+# addrmetada = {function:{address:ref}}
+addrmetada = {}
+# global metadata
+metadata = {}
 
 # This function predicts the varible datatypes
 def predictdtype(dtype, variable, parameters):
@@ -129,8 +133,8 @@ def printvariable(variables, parameters, fun_name):
         # get the varibale data type
         # variable.getDataType().adjustComponents()
         # get the datatype
-        print(variable.getDataType().getDefaultLabelPrefix())
-        print(variable.getDataType().getDefaultAbbreviatedLabelPrefix())
+        # print(variable.getDataType().getDefaultLabelPrefix())
+        # print(variable.getDataType().getDefaultAbbreviatedLabelPrefix())
         dtype = variable.getDataType().getDisplayName()
         print("dtype: {}".format(dtype))
         if "undefined" in str(dtype):
@@ -166,9 +170,11 @@ def printvariable(variables, parameters, fun_name):
                             register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
                             predictvar(ref.getFromAddress().next(), struct_vars[struct_var], register, fun_name)
                             continue
+                        addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(struct_vars[struct_var])})
                         with open("test.txt", "a") as f:
                             f.write(str(ref.getFromAddress()).lstrip("0") + " " + struct_vars[struct_var] + "\n")
                     elif owner == "array":
+                        addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(struct_vars[struct_var])})
                         with open("test.txt", "a") as f:
                             f.write(str(ref.getFromAddress()).lstrip("0") + " " + struct_vars[struct_var] + "\n")
             continue
@@ -188,6 +194,7 @@ def printvariable(variables, parameters, fun_name):
                     continue
                 print(ref.getReferenceType())
                 print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
+                addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(variable.getName())})
                 with open("test.txt", "a") as f:
                     f.write(str(ref.getFromAddress()).lstrip("0") + " " + variable.getName() + "\n")
 
@@ -198,7 +205,7 @@ def printvariable(variables, parameters, fun_name):
         varmetada[str(varname)] = {"offset":offset + 8, "dtype":str(dtype).replace(" ", ""), "owner":owner, "size":size}
 
 # This function is used to predict the arrays
-def predictarrvar(entrypoint):
+def predictarrvar(entrypoint, fun_name):
     cur = entrypoint
     # varmetada with offset as keys and variable name as values
     offsetvarmetada = {v["offset"]:k for k,v in varmetada.iteritems()}
@@ -206,6 +213,8 @@ def predictarrvar(entrypoint):
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            if getFunctionContaining(cur).getName() != fun_name:
+                break
             if str(inst) == "RET":
                 break
             if not inst.getNumOperands() == 2 or not inst.getMnemonicString() == "MOV":
@@ -217,12 +226,14 @@ def predictarrvar(entrypoint):
                     for off in offsetvarmetada:
                         print(hex(off))
                         if hex(off) in [str(x) for x in inst.getOpObjects(0)]:
+                            addrmetada.update({str(cur).lstrip("0"):str(offsetvarmetada[off])})
                             with open("test.txt", "a") as f:
                                 f.write(str(cur).lstrip("0") + " " + offsetvarmetada[off] + "\n")
                 # for the load instruction
                 if len(inst.getOpObjects(1)) >= 3:
                     for off in offsetvarmetada:
                         if hex(off) in [str(x) for x in inst.getOpObjects(1)]:
+                            addrmetada.update({str(cur).lstrip("0"):str(offsetvarmetada[off])})
                             with open("test.txt", "a") as f:
                                 f.write(str(cur).lstrip("0") + " " + offsetvarmetada[off] + "\n")
         cur = cur.next()
@@ -244,6 +255,9 @@ def predictvar(entrypoint, name, register, fun_name):
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            # quit if the instruction is out of the function
+            if getFunctionContaining(cur).getName() != fun_name:
+                break
             # quit if new static block
             if cur >= add:
                 break
@@ -274,6 +288,7 @@ def predictvar(entrypoint, name, register, fun_name):
                                 pass
                         decision = list(set(regs) & set(registers))
                         if decision:
+                            addrmetada.update({str(cur).lstrip("0"):str(name)})
                             with open("test.txt", "a") as f:
                                 f.write(str(cur).lstrip("0") + " " + name + "\n")
                         break
@@ -294,6 +309,7 @@ def predictvar(entrypoint, name, register, fun_name):
                                 pass
                         decision = list(set(regs) & set(registers))
                         if decision:
+                            addrmetada.update({str(cur).lstrip("0"):str(name)})
                             with open("test.txt", "a") as f:
                                 f.write(str(cur).lstrip("0") + " " + name + "\n")
             # if their is a register copy
@@ -310,34 +326,87 @@ def predictvar(entrypoint, name, register, fun_name):
         cur = cur.next()
     print("####################")
 
-def predictGlobals(entrypoint):
+
+# get globals/static symbols
+# these are the symbols which are defined in the data section
+# data_symbols = {address:{owner:owner, datatype:datatype}}
+data_symbols = {}
+def get_data_symbols():
+    for s in (list(program.getSymbolTable().	getAllSymbols(True))):
+        # instructions to be referenced from the global variables
+        ref_instructions = [getInstructionAt(x.getFromAddress()) for x in s.getReferences()]
+        if ref_instructions and not None in ref_instructions:
+            try:
+                # let symbol to be added be s
+                symowner = s
+                symtype = predictownertype(s.getObject().getDataType().getDefaultLabelPrefix())
+                print("datatype: {}".format(s.getObject().getDataType()))
+                # most of the cases fail here, if they don't belong to any instructions
+                print([getInstructionAt(x.getFromAddress()) for x in s.getReferences()])
+                addresses = [x.getFromAddress() for x in s.getReferences()]
+
+                # predict type
+                if s.getObject().getParent():
+                    print(s.getObject().getParent())
+                    print(s.getObject().getParent().getPathName())
+                    symowner = s.getObject().getParent().getPathName()
+                    symtype = s.getObject().getParent()
+                    symtype = predictownertype(symtype.getBaseDataType().getDefaultLabelPrefix())
+                print(s.getPath())
+                for address in addresses:
+                    data_symbols[address] = {}
+                    data_symbols[address]["owner"] = str(symowner)
+                    data_symbols[address]["datatype"] = str(symtype)
+                print("\n")
+            except:
+                pass
+
+get_data_symbols()
+
+def predictGlobals(entrypoint, fun_name):
+    add = "ffffffff"
+    for block in fun_blocks[fun_name]:
+        if (block > entrypoint):
+            add = block
+            break
     cur = entrypoint
     print("^^^^^^^^^^^^^^")
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            # quit if outside of the block
+            if getFunctionContaining(cur).getName() != fun_name:
+                break
+            if cur >= add:
+                break
             # quit if new static block
             if str(inst) == "RET":
                 break
             print(inst)
-            for ref in list(getReferencesFrom(cur)):
-                print(ref.	getToAddress())
-                print(ref)
-                print(refmanager.getReferencedVariable(ref))
-                print("###############")
+            if cur in data_symbols:
+                print(cur)
+                addrmetada.update({str(cur):str(data_symbols[cur]["owner"])})
         cur = cur.next()
     print("^^^^^^^^^^^^^^")
 
-
 # get the function iterator object
 functions = program.getFunctionManager().getFunctions(True)
+ignore_functions = { "_start", "__libc_start_main", "__libc_csu_init", "_init",  "exit",
+"_dl_relocate_static_pie", "_fini", "__libc_csu_fini"}
 # Get the functions having a call stack
 # checks are needed only if the function has a call stack
-functions = [function for function in functions if function.getStackFrame().getStackVariables() and function.getName() != "_start"]
+functions = [function for function in functions if str(function) not in ignore_functions and function.getName() in fun_blocks]
 # write the total number of functions into a file
 with open("test.txt", "w") as f:
     f.write(str(len(functions)) + "\n\n")
+
+# Iterate through all the functions
 for function in functions:
+
+    # Get code markup i.e. decompiled code
+    tokengrp = decompinterface.decompileFunction(function, 0, ConsoleTaskMonitor())
+    # print(tokengrp.getDecompiledFunction().	getC())
+
     # Write the function name
     print(function.getName())
     # compute the basic building blocks
@@ -349,8 +418,7 @@ for function in functions:
     print("frame size: {}".format(function.getStackFrame().getFrameSize()))
     # get the starting address of the function
     entrypoint = function.getEntryPoint()
-    tokengrp = decompinterface.decompileFunction(function, 0, ConsoleTaskMonitor())
-    print(tokengrp.getCCodeMarkup())
+
     print(list(function.getParameters()))
     # print varibale names
     parameters = list(function.getParameters())
@@ -360,7 +428,7 @@ for function in functions:
     # predictvar(entrypoint, variables)
     # predict the dynamic array accesses like
     # mov DWORD PTR [rbp+rax*4-0x30],edx
-    predictarrvar(entrypoint)
+    predictarrvar(entrypoint, function.getName())
     with open("test.txt", "a") as f:
         f.write("\n")
         for k in varmetada:
@@ -371,34 +439,18 @@ for function in functions:
             f.write(str(varmetada[k]["size"]) + "\n")
         f.write("\n")
     print(varmetada)
-    varmetada = {}
     # print(program.	getTreeManager().	getTreeNames())
-    for s in (list(program.getSymbolTable().	getAllSymbols(True))):
-        # or if	getParentNamespace() == function
-        # if str(s.getParentSymbol()) == str(function):
-        #     print(s)
-        #     print(s.getAddress())
-        #     print(list(refmanager.getReferencesTo(s.getAddress())))
-        #     print(s.getReferences())
-        #     print(s.getObject().getDataType())
-        #     print(s.getPath())
-        # instructions to be referenced from the global variables
-        ref_instructions = [getInstructionAt(x.getFromAddress()) for x in s.getReferences()]
-        if ref_instructions and not None in ref_instructions:
-            try:
-                #getInstructionAt(
-                print("datatype: {}".format(s.getObject().getDataType()))
-                print([getInstructionAt(x.getFromAddress()) for x in s.getReferences()])
-                if s.getObject().getParent():
-                    print(s.getObject().getParent())
-                    print(s.getObject().getParent().getPathName())
-                print(s.getPath())
-                print("\n")
-            except:
-                pass
-    predictGlobals(entrypoint)
-    print(list(program.getSymbolTable().getDefinedSymbols()))
-    # print(list(currentProgram.getSymbolTable().	getChildren(currentProgram.getSymbolTable().getNamespace(entrypoint).	getSymbol())))
-    # print(list(currentProgram.getSymbolTable().	getSymbols(currentProgram.getSymbolTable().getNamespace(entrypoint).	getParentNamespace())))
-    # printtokens(list(function.getStackFrame().getStackVariables()), tokengrp.getCCodeMarkup())
+    predictGlobals(entrypoint, function.getName())
+    metadata[str(function.getName())] = {"addresses":{}, "variables":{}}
+    metadata[str(function.getName())]["addresses"] = addrmetada
+    metadata[str(function.getName())]["variables"] = varmetada
+    varmetada = {}
+    addrmetada = {}
     print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
+# for tree in currentProgram.getTreeManager().getTreeNames():
+#     print(tree)
+#     print(currentProgram.getTreeManager().getFragment(tree, ".text"))
+#     mod = currentProgram.getTreeManager().getRootModule(tree)
+#     print([x.	getName() for x in mod.getChildren()])
+print(data_symbols)
+print(metadata)
