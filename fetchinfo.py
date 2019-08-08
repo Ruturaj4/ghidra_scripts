@@ -224,6 +224,8 @@ def predictarrvar(entrypoint, fun_name):
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            if getFunctionContaining(cur) is None:
+                break
             if getFunctionContaining(cur).getName() != fun_name:
                 break
             if str(inst) == "RET":
@@ -265,7 +267,10 @@ def predictvar(entrypoint, name, register, fun_name):
     while cur:
         inst = getInstructionAt(cur)
         if inst:
+            if getFunctionContaining(cur) is None:
+                break
             # quit if the instruction is out of the function
+            print(getFunctionContaining(cur))
             if getFunctionContaining(cur).getName() != fun_name:
                 break
             # quit if new static block
@@ -334,14 +339,22 @@ def predictvar(entrypoint, name, register, fun_name):
 # these are the symbols which are defined in the data section
 def get_data_symbols():
     symbols = set(program.getSymbolTable().	getAllSymbols(True))
-    print(symbols)
+    ignore_symbols = { "_start", "__libc_start_main", "__libc_csu_init", "_init",  "exit",
+    "_dl_relocate_static_pie", "_fini", "__libc_csu_fini", "malloc", "calloc", "realloc", "free",
+    "gets", "printf", "puts","fgets", ".plt", "atoi"}
     for s in symbols:
+        if str(s) in ignore_symbols:
+            continue
         # instructions to be referenced from the global variables
         ref_instructions = [getInstructionAt(x.getFromAddress()) for x in s.getReferences()]
         if ref_instructions and not all(x is None for x in ref_instructions):
             try:
                 # let symbol to be added be s
-                print(s)
+                print(type(s.getObject()))
+                print(s.isExternal())
+                print(s.isDynamic())
+                print(s.isExternalEntryPoint())
+                print(s.isGlobal())
                 address = str(s.getAddress()).lstrip("0")
                 size = str(s.getObject().getLength())
                 print(size)
@@ -354,11 +367,11 @@ def get_data_symbols():
                 print(type(s.getObject()))
                 dtype = s
                 owner = predictownertype(s.getObject().getDataType().getDefaultLabelPrefix())
-                print("datatype: {}".format(s.getObject().getDataType()))
+                # print("datatype: {}".format(s.getObject().getDataType()))
                 # most of the cases fail here, if they don't belong to any instructions
                 print([getInstructionAt(x.getFromAddress()) for x in s.getReferences()])
                 addresses = [x.getFromAddress() for x in s.getReferences()]
-                print(addresses)
+                # print(addresses)
                 # predict type
                 if s.getObject().getParent():
                     print("&&&&&&&&&&&&&&&&&&&&&")
@@ -437,15 +450,14 @@ get_data_symbols()
 # get the function iterator object
 functions = program.getFunctionManager().getFunctions(True)
 ignore_functions = { "_start", "__libc_start_main", "__libc_csu_init", "_init",  "exit",
-"_dl_relocate_static_pie", "_fini", "__libc_csu_fini", "malloc", "calloc", "realloc", "free"
-"gets", "printf", "puts","fgets"}
+"_dl_relocate_static_pie", "_fini", "__libc_csu_fini", "malloc", "calloc", "realloc", "free",
+"gets", "printf", "puts", "fgets", "atoi"}
 # Get the functions having a call stack
 # checks are needed only if the function has a call stack
 functions = [function for function in functions if str(function) not in ignore_functions and function.getName() in fun_blocks]
-
+print(functions)
 # Iterate through all the functions
 for function in functions:
-
     # Get code markup i.e. decompiled code
     tokengrp = decompinterface.decompileFunction(function, 0, ConsoleTaskMonitor())
     # print(tokengrp.getDecompiledFunction().	getC())
@@ -463,6 +475,7 @@ for function in functions:
     parameters = list(function.getParameters())
     variables = list(function.getStackFrame().getStackVariables())
     print("loc: {}".format(list(function.getLocalVariables())))
+    print(function)
     printvariable(variables, parameters, function.getName())
     # predictvar(entrypoint, variables)
     # predict the dynamic array accesses like
@@ -477,5 +490,13 @@ for function in functions:
 #     mod = currentProgram.getTreeManager().getRootModule(tree)
 #     print([x.	getName() for x in mod.getChildren()])
 
-with open("test.txt", "w") as f:
-    json.dump(metadata, f)
+# Now create a file so that, it will be readable for c++
+count = len(metadata) - 1
+print(count)
+for k,v in metadata.items():
+    print(k)
+
+
+# Another option is to store the data into a json format
+# with open("test.txt", "w") as f:
+#     json.dump(metadata, f)
