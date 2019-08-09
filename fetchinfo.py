@@ -491,10 +491,31 @@ for function in functions:
 #     print([x.	getName() for x in mod.getChildren()])
 
 # Now create a file so that, it will be readable for c++
-count = len(metadata) - 1
-print(count)
-for k,v in metadata.items():
-    print(k)
+with open("test.txt", "w") as f:
+    count = len(metadata) - 1
+    f.write("{}\n".format(count))
+    for k,v in metadata.items():
+        if k == ".global":
+            continue
+        f.write("{}\n".format(k))
+        f.write("{}\n".format("addresses"))
+        for add in v["addresses"]:
+            f.write("{} ".format(add["address"]))
+            f.write("{}\n".format(add["owner"]))
+        f.write("\n")
+        f.write("{}\n".format("locals"))
+        for var in v["variables"]:
+            f.write("{} {} {} {} {}\n".format(var["offset"], var["dtype"], var["ownertype"], var["owner"], var["size"]))
+        f.write("\n")
+        f.write("{}\n".format("namespace"))
+        for var in v["namespace"]:
+            f.write("{} {} {} {} {}\n".format(var["address"], var["datatype"], var["owner"], var["size"]))
+        f.write("\n")
+    f.write(".global\n")
+    for var in metadata[".global"]:
+        f.write("{} {} {} {}\n".format(var["address"], var["datatype"], var["owner"], var["size"]))
+    f.write("\n")
+
 
 
 # Another option is to store the data into a json format
