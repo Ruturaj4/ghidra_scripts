@@ -159,7 +159,7 @@ def printvariable(variables, parameters, fun_name):
                 struct_vars[offset] = component.getFieldName()
                 if not str(fun_name) in metadata:
                     metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                metadata[str(fun_name)]["variables"].append({"owner":str(component.getFieldName()), "offset":offset + 8, "dtype":str(component.getDataType()).replace(" ", ""), "ownertype":owner, "size":size})
+                metadata[str(fun_name)]["variables"].append({"owner":str(fun_name) + "_" + str(component.getFieldName()), "offset":offset + 8, "dtype":str(component.getDataType()).replace(" ", ""), "ownertype":owner, "size":size})
                 varmetada[str(component.getFieldName())] = {"offset":offset + 8, "dtype":str(component.getDataType()).replace(" ", ""), "owner":owner, "size":size}
             for ref in refmanager.getReferencesTo(variable):
                 print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
@@ -174,17 +174,17 @@ def printvariable(variables, parameters, fun_name):
                             continue
                         if str(ref.getReferenceType()) == "READ" and owner == "pointer":
                             register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
-                            predictvar(ref.getFromAddress().next(), struct_vars[struct_var], register, fun_name)
+                            predictvar(ref.getFromAddress().next(), struct_vars[struct_var], register, fun_name, str(fun_name))
                             continue
                         addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(struct_vars[struct_var])})
                         if not str(fun_name) in metadata:
                             metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                        metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(struct_vars[struct_var])})
+                        metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(fun_name) + "_" + str(struct_vars[struct_var])})
                     elif owner == "array":
                         addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(struct_vars[struct_var])})
                         if not str(fun_name) in metadata:
                             metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                        metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(struct_vars[struct_var])})
+                        metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(fun_name) + "_" + str(struct_vars[struct_var])})
             continue
         except:
             for ref in refmanager.getReferencesTo(variable):
@@ -198,21 +198,21 @@ def printvariable(variables, parameters, fun_name):
                     if not getInstructionAt(ref.getFromAddress()).getMnemonicString() == "MOV":
                         continue
                     register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
-                    predictvar(ref.getFromAddress().next(), variable.getName(), register, fun_name)
+                    predictvar(ref.getFromAddress().next(), variable.getName(), register, fun_name, str(fun_name))
                     continue
                 print(ref.getReferenceType())
                 print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
                 addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(variable.getName())})
                 if not str(fun_name) in metadata:
                     metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(variable.getName())})
+                metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(fun_name) + "_" + str(variable.getName())})
         # get the varibale name/ owner
         varname = variable.getName()
         # size of the variable
         size = variable.getLength()
         if not str(fun_name) in metadata:
             metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-        metadata[str(fun_name)]["variables"].append({"owner":str(varname), "offset":offset + 8, "dtype":str(dtype).replace(" ", ""), "ownertype":owner, "size":size})
+        metadata[str(fun_name)]["variables"].append({"owner":str(fun_name) + "_" + str(varname), "offset":offset + 8, "dtype":str(dtype).replace(" ", ""), "ownertype":owner, "size":size})
         varmetada[str(varname)] = {"offset":offset + 8, "dtype":str(dtype).replace(" ", ""), "owner":owner, "size":size}
 
 # This function is used to predict the arrays
@@ -254,7 +254,7 @@ def predictarrvar(entrypoint, fun_name):
         cur = cur.next()
 
 # This function is used to predict the pointers
-def predictvar(entrypoint, name, register, fun_name):
+def predictvar(entrypoint, name, register, fun_name, namespace):
     add = "ffffffff"
     for block in fun_blocks[fun_name]:
         if (block > entrypoint):
@@ -301,7 +301,7 @@ def predictvar(entrypoint, name, register, fun_name):
                             addrmetada.update({str(cur).lstrip("0"):str(name)})
                             if not str(fun_name) in metadata:
                                 metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":str(name)})
+                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":namespace + "_" + str(name)})
                         break
             # if there is a store, then print
             elif "STORE" in inst_info:
@@ -318,7 +318,7 @@ def predictvar(entrypoint, name, register, fun_name):
                             addrmetada.update({str(cur).lstrip("0"):str(name)})
                             if not str(fun_name) in metadata:
                                 metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":str(name)})
+                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":namespace + "_" + str(name)})
             # if their is a register copy
             elif "COPY" in inst_info and len(inst_info) == 1:
                 # Add this if required
@@ -426,21 +426,19 @@ def get_data_symbols():
                             continue
                         register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
                         print(register)
-                        predictvar(ref.getFromAddress(), dtype, register, fun_name)
+                        predictvar(ref.getFromAddress(), dtype, register, fun_name, namespace)
                         continue
-                    print(ref.getReferenceType())
-                    print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
                     if str(fun_name) not in metadata:
                         metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                    metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":str(dtype)})
+                    metadata[str(fun_name)]["addresses"].append({"address":str(ref.getFromAddress()).lstrip("0"), "owner":namespace + "_" + str(dtype)})
                     print("\n")
                 if namespace == ".global":
-                    metadata[".global"].append({"owner":str(dtype),"datatype":owner, "address":address, "size":size})
+                    metadata[".global"].append({"owner":namespace + "_" + str(dtype),"datatype":owner, "address":address, "size":size})
                     print("\n")
                     continue
                 elif str(namespace) not in metadata:
                     metadata[str(namespace)] = {"variables":[], "addresses":[], "namespace":[]}
-                metadata[str(namespace)]["namespace"].append({"owner":str(dtype),"datatype":owner, "address":address, "size":size})
+                metadata[str(namespace)]["namespace"].append({"owner":namespace + "_" + str(dtype),"datatype":owner, "address":address, "size":size})
                 print("\n")
             except AttributeError:
                 pass
@@ -505,15 +503,15 @@ with open("test.txt", "w") as f:
         f.write("\n")
         f.write("{}\n".format("locals"))
         for var in v["variables"]:
-            f.write("{} {} {} {} {}\n".format(var["offset"], var["dtype"], var["ownertype"], var["owner"], var["size"]))
+            f.write("{} {} {} {}\n".format(var["offset"], var["ownertype"], var["owner"], var["size"]))
         f.write("\n")
         f.write("{}\n".format("namespace"))
         for var in v["namespace"]:
-            f.write("{} {} {} {} {}\n".format(var["address"], var["datatype"], var["owner"], var["size"]))
+            f.write("{} {} {} {}\n".format(str(int(var["address"], 16)), var["datatype"], var["owner"], var["size"]))
         f.write("\n")
     f.write(".global\n")
     for var in metadata[".global"]:
-        f.write("{} {} {} {}\n".format(var["address"], var["datatype"], var["owner"], var["size"]))
+        f.write("{} {} {} {}\n".format(str(int(var["address"], 16)), var["datatype"], var["owner"], var["size"]))
     f.write("\n")
 
 
