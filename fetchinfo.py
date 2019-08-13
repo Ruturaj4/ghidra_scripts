@@ -242,7 +242,7 @@ def predictarrvar(entrypoint, fun_name):
                             addrmetada.update({str(cur).lstrip("0"):str(offsetvarmetada[off])})
                             if not str(fun_name) in metadata:
                                 metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":str(offsetvarmetada[off])})
+                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":str(fun_name) + "_" + str(offsetvarmetada[off])})
                 # for the load instruction
                 if len(inst.getOpObjects(1)) >= 3:
                     for off in offsetvarmetada:
@@ -250,7 +250,7 @@ def predictarrvar(entrypoint, fun_name):
                             addrmetada.update({str(cur).lstrip("0"):str(offsetvarmetada[off])})
                             if not str(fun_name) in metadata:
                                 metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
-                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":str(offsetvarmetada[off])})
+                            metadata[str(fun_name)]["addresses"].append({"address":str(cur).lstrip("0"), "owner":str(fun_name) + "_" + str(offsetvarmetada[off])})
         cur = cur.next()
 
 # This function is used to predict the pointers
@@ -488,8 +488,13 @@ for function in functions:
 #     mod = currentProgram.getTreeManager().getRootModule(tree)
 #     print([x.	getName() for x in mod.getChildren()])
 
+import os
+path, file = os.path.split(currentProgram.getExecutablePath())
+print(path)
+print(os.path.splitext(file))
+
 # Now create a file so that, it will be readable for c++
-with open("test.txt", "w") as f:
+with open("/projects/zephyr/Ruturaj/final_tool/test_cases/new_ghidra_text/" + os.path.splitext(file)[0] + ".text", "w") as f:
     count = len(metadata) - 1
     f.write("{}\n".format(count))
     for k,v in metadata.items():
@@ -513,7 +518,6 @@ with open("test.txt", "w") as f:
     for var in metadata[".global"]:
         f.write("{} {} {} {}\n".format(str(int(var["address"], 16)), var["datatype"], var["owner"], var["size"]))
     f.write("\n")
-
 
 
 # Another option is to store the data into a json format
