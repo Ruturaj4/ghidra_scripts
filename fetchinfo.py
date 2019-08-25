@@ -113,10 +113,10 @@ def predictdtype(dtype, variable, parameters):
     return dtype, owner, parameters
 
 def predictownertype(prefix):
-    print("prefix: {}".format(prefix))
+    # print("prefix: {}".format(prefix))
     # special case for a pointer array
     if str(prefix) == "PTR_ARRAY":
-        return "array"
+        return "pointer"
     if "PTR" in str(prefix):
         return "pointer"
     elif "ARRAY" in str(prefix):
@@ -128,7 +128,7 @@ def predictownertype(prefix):
 
 # prints varible names along with some other information
 def printvariable(variables, parameters, fun_name):
-    print(variables)
+    # print(variables)
     for variable in variables:
         # print("variable: {}".format(variable))
         # get the offset of the varible on the stack
@@ -150,7 +150,7 @@ def printvariable(variables, parameters, fun_name):
 
         try:
             # if the type is structure
-            print("variable storage: {}".format(variable.getDataType().getDefinedComponents()))
+            # print("variable storage: {}".format(variable.getDataType().getDefinedComponents()))
             struct_vars = {}
             for component in variable.getDataType().getDefinedComponents():
                 offset = variable.getStackOffset() + component.getOffset()
@@ -162,11 +162,11 @@ def printvariable(variables, parameters, fun_name):
                 metadata[str(fun_name)]["variables"].append({"owner":str(fun_name) + "_" + str(component.getFieldName()), "offset":offset + 8, "dtype":str(component.getDataType()).replace(" ", ""), "ownertype":owner, "size":size})
                 varmetada[str(component.getFieldName())] = {"offset":offset + 8, "dtype":str(component.getDataType()).replace(" ", ""), "owner":owner, "size":size}
             for ref in refmanager.getReferencesTo(variable):
-                print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
+                # print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
                 for struct_var in struct_vars:
-                    print(struct_var)
-                    print(ref.getToAddress().getOffset())
-                    print(ref.getReferenceType())
+                    # print(struct_var)
+                    # print(ref.getToAddress().getOffset())
+                    # print(ref.getReferenceType())
                     if struct_var == ref.getToAddress().getOffset():
                         if str(ref.getReferenceType()) == "DATA":
                             continue
@@ -189,9 +189,10 @@ def printvariable(variables, parameters, fun_name):
         except:
             for ref in refmanager.getReferencesTo(variable):
                 # checks to avoid the accesses
-                print(ref)
+                # print(ref)
                 if str(ref.getReferenceType()) == "DATA":
-                    continue
+                    if owner != "array":
+                        continue
                 if str(ref.getReferenceType()) == "READ" and owner == "scalar":
                     continue
                 if str(ref.getReferenceType()) == "READ" and owner == "pointer":
@@ -200,8 +201,8 @@ def printvariable(variables, parameters, fun_name):
                     register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
                     predictvar(ref.getFromAddress().next(), variable.getName(), register, fun_name, str(fun_name))
                     continue
-                print(ref.getReferenceType())
-                print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
+                # print(ref.getReferenceType())
+                # print("ref: {}-{} : {}".format(ref.getFromAddress(), ref.getSource(), ref.getToAddress()))
                 addrmetada.update({str(ref.getFromAddress()).lstrip("0"):str(variable.getName())})
                 if not str(fun_name) in metadata:
                     metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[]}
@@ -220,7 +221,6 @@ def predictarrvar(entrypoint, fun_name):
     cur = entrypoint
     # varmetada with offset as keys and variable name as values
     offsetvarmetada = {v["offset"]:k for k,v in varmetada.iteritems()}
-
     while cur:
         inst = getInstructionAt(cur)
         if inst:
@@ -237,7 +237,6 @@ def predictarrvar(entrypoint, fun_name):
                 # for the store instruction
                 if len(inst.getOpObjects(0)) >= 3:
                     for off in offsetvarmetada:
-                        print(hex(off))
                         if hex(off) in [str(x) for x in inst.getOpObjects(0)]:
                             addrmetada.update({str(cur).lstrip("0"):str(offsetvarmetada[off])})
                             if not str(fun_name) in metadata:
@@ -270,7 +269,6 @@ def predictvar(entrypoint, name, register, fun_name, namespace):
             if getFunctionContaining(cur) is None:
                 break
             # quit if the instruction is out of the function
-            print(getFunctionContaining(cur))
             if getFunctionContaining(cur).getName() != fun_name:
                 break
             # quit if new static block
@@ -283,11 +281,10 @@ def predictvar(entrypoint, name, register, fun_name, namespace):
                 cur = cur.next()
                 continue
             inst_info = [str(i.getMnemonic()) for i in inst.getPcode()]
-            print(inst_info)
             # stop the look for any load in the
             if "LOAD" in inst_info:
                 if inst.getRegister(0):
-                    print("{} : {}".format(inst.getRegister(0).getBaseRegister(), register))
+                    # print("{} : {}".format(inst.getRegister(0).getBaseRegister(), register))
                     if str(inst.getRegister(0).getBaseRegister()) == str(register):
                         # temporary registers
                         registers = []
@@ -341,7 +338,12 @@ def get_data_symbols():
     symbols = set(program.getSymbolTable().	getAllSymbols(True))
     ignore_symbols = { "_start", "__libc_start_main", "__libc_csu_init", "_init",  "exit",
     "_dl_relocate_static_pie", "_fini", "__libc_csu_fini", "malloc", "calloc", "realloc", "free",
-    "gets", "printf", "puts","fgets", ".plt", "atoi"}
+    "gets", "printf", "scanf", "puts", "fgets", ".plt", "atoi", "fopen", "fclose", "__assert_fail",
+    "strcmp", "strcpy", "strlen", "getc", "getchar", "putchar", "putc", "strcat", "sprint", "fprintf",
+    "setitimer", "pause", "signal", "sigalrm_handler", "strncpy", "memset", "strdup", "wcscpy", "wcslen",
+    "shmdt", "shmctl", "shmat", "shmget", "register_tm_clones", "deregister_tm_clones",
+    "__do_global_dtors_aux", "relSharedMem", "getSharedMem", "frame_dummy", "getenv", "sleep", "wait", "fork",
+    "setjump", "longjump", "_setjmp", "getcwd", "longjmp", "memcpy", "__frame_dummy_init_array_entry"}
     for s in symbols:
         if str(s) in ignore_symbols:
             continue
@@ -350,32 +352,31 @@ def get_data_symbols():
         if ref_instructions and not all(x is None for x in ref_instructions):
             try:
                 # let symbol to be added be s
-                print(type(s.getObject()))
-                print(s.isExternal())
-                print(s.isDynamic())
-                print(s.isExternalEntryPoint())
-                print(s.isGlobal())
+                # print(type(s.getObject()))
+                # print(s.isExternal())
+                # print(s.isDynamic())
+                # print(s.isExternalEntryPoint())
+                # print(s.isGlobal())
                 address = str(s.getAddress()).lstrip("0")
                 size = str(s.getObject().getLength())
-                print(size)
+                # print(size)
                 # where is this variable? is it in the global namespace or is in the function namespace
                 if s.isGlobal():
                     namespace = ".global"
                 else:
                     namespace = str(s.getPath()[0])
-                print(s.isGlobal())
-                print(type(s.getObject()))
+                # print(s.isGlobal())
+                # print(type(s.getObject()))
                 dtype = s
                 owner = predictownertype(s.getObject().getDataType().getDefaultLabelPrefix())
                 # print("datatype: {}".format(s.getObject().getDataType()))
                 # most of the cases fail here, if they don't belong to any instructions
-                print([getInstructionAt(x.getFromAddress()) for x in s.getReferences()])
+                # print([getInstructionAt(x.getFromAddress()) for x in s.getReferences()])
                 addresses = [x.getFromAddress() for x in s.getReferences()]
                 # print(addresses)
                 # predict type
                 if s.getObject().getParent():
-                    print("&&&&&&&&&&&&&&&&&&&&&")
-                    print("parent: {}".format(s.getObject().getParent().getParent()))
+                    # print("parent: {}".format(s.getObject().getParent().getParent()))
                     # dtype = s.getObject().getParent().getPathName()
                     # decide their namespace - it will be same as the their parent function
                     if s.isGlobal():
@@ -386,46 +387,40 @@ def get_data_symbols():
                         address = str(s.getObject().getParent().getAddress()).lstrip("0")
                     owner = s.getObject().getParent()
                     owner = predictownertype(owner.getBaseDataType().getDefaultLabelPrefix())
-                    print("&&&&&&&&&&&&&&&&&&&&&")
                 try:
                     # first variable in a structure
-                    print("variable storage: {}".format(list(s.getObject().getDataType().getDefinedComponents())))
+                    # print("variable storage: {}".format(list(s.getObject().getDataType().getDefinedComponents())))
                     for component in s.getObject().getDataType().getDefinedComponents():
-                        print(component.	getDefaultFieldName())
+                        # print(component.	getDefaultFieldName())
                         owner = predictownertype(component.getDataType().getDefaultLabelPrefix())
                         size = str(component.getLength())
                         dtype = str(dtype) + "." + str(component.getFieldName())
                         namespacemetada[str(component.getFieldName())] = {"dtype":str(component.getDataType()).replace(" ", ""), "owner":owner, "size":size}
-                        print(owner)
                         break
                 except:
                     pass
                 for ref in s.getReferences():
-                    print(getInstructionAt(x.getFromAddress()))
+                    # print(s)
+                    # print( list(s.getReferences()))
+                    # print(getInstructionAt(x.getFromAddress()))
                     if getInstructionAt(x.getFromAddress()) == None:
                         continue
-                    print(owner)
-                    print("ref type: {}".format(ref.getReferenceType()))
                     if str(ref.getFromAddress()) == "Entry Point":
                         continue
                     fun_name = getFunctionContaining(ref.getFromAddress()).getName()
                     if str(ref.getReferenceType()) == "EXTERNAL":
-                        print("\n")
                         continue
                     if str(ref.getReferenceType()) == "INDIRECTION":
-                        print("\n")
                         continue
                     if str(ref.getReferenceType()) == "DATA":
-                        print("\n")
                         continue
                     if str(ref.getReferenceType()) == "READ" and owner == "scalar":
-                        print("\n")
                         continue
                     if str(ref.getReferenceType()) == "READ" and owner == "pointer":
                         if not getInstructionAt(ref.getFromAddress()).getMnemonicString() == "MOV":
                             continue
                         register = getInstructionAt(ref.getFromAddress()).getRegister(0).getBaseRegister()
-                        print(register)
+                        # print(register)
                         predictvar(ref.getFromAddress(), dtype, register, fun_name, namespace)
                         continue
                     if str(fun_name) not in metadata:
@@ -449,31 +444,32 @@ get_data_symbols()
 functions = program.getFunctionManager().getFunctions(True)
 ignore_functions = { "_start", "__libc_start_main", "__libc_csu_init", "_init",  "exit",
 "_dl_relocate_static_pie", "_fini", "__libc_csu_fini", "malloc", "calloc", "realloc", "free",
-"gets", "printf", "puts", "fgets", "atoi"}
+"gets", "printf", "scanf", "puts", "fgets", "atoi", "fopen", "fclose", "__assert_fail", "strcat",
+"strcmp", "strcpy", "strlen", "getc", "getchar", "putchar", "putc", "sprint", "fprintf", "setitimer",
+"pause", "signal", "sigalrm_handler", "strncpy", "memset", "strdup", "wcscpy", "wcslen",
+"shmdt", "shmctl", "shmat", "shmget", "register_tm_clones", "deregister_tm_clones", "__do_global_dtors_aux",
+"relSharedMem", "getSharedMem", "frame_dummy", "getenv", "sleep", "wait", "fork", "setjump", "longjump", "_setjmp",
+"getcwd", "longjmp", "memcpy", "__frame_dummy_init_array_entry"}
 # Get the functions having a call stack
 # checks are needed only if the function has a call stack
 functions = [function for function in functions if str(function) not in ignore_functions and function.getName() in fun_blocks]
-print(functions)
 # Iterate through all the functions
 for function in functions:
+    print(function)
     # Get code markup i.e. decompiled code
     tokengrp = decompinterface.decompileFunction(function, 0, ConsoleTaskMonitor())
     # print(tokengrp.getDecompiledFunction().	getC())
     # compute the basic building blocks
-    print(fun_blocks[function.getName()])
+    # print(fun_blocks[function.getName()])
     # Useful to get the function size
     # The stack size is 8 bytes more when using ghidra, hence reducing the size
     # f.write(str(function.getStackFrame().getFrameSize() - 8) + "\n")
-    print("frame size: {}".format(function.getStackFrame().getFrameSize()))
+    # print("frame size: {}".format(function.getStackFrame().getFrameSize()))
     # get the starting address of the function
     entrypoint = function.getEntryPoint()
-
-    print(list(function.getParameters()))
     # print varibale names
     parameters = list(function.getParameters())
     variables = list(function.getStackFrame().getStackVariables())
-    print("loc: {}".format(list(function.getLocalVariables())))
-    print(function)
     printvariable(variables, parameters, function.getName())
     # predictvar(entrypoint, variables)
     # predict the dynamic array accesses like
@@ -481,20 +477,17 @@ for function in functions:
     predictarrvar(entrypoint, function.getName())
     varmetada = {}
     addrmetada = {}
-    print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
+    # print("ctg: {} and entrypoint: {}".format(list(function.getStackFrame().getStackVariables()), entrypoint))
 # for tree in currentProgram.getTreeManager().getTreeNames():
-#     print(tree)
 #     print(currentProgram.getTreeManager().getFragment(tree, ".text"))
 #     mod = currentProgram.getTreeManager().getRootModule(tree)
 #     print([x.	getName() for x in mod.getChildren()])
 
 import os
 path, file = os.path.split(currentProgram.getExecutablePath())
-print(path)
-print(os.path.splitext(file))
 
 # Now create a file so that, it will be readable for c++
-with open("/projects/zephyr/Ruturaj/final_tool/test_cases/new_ghidra_text/" + os.path.splitext(file)[0] + ".text", "w") as f:
+with open(os.path.join(path, os.path.splitext(file)[0]) + ".text", "w") as f:
     count = len(metadata) - 1
     f.write("{}\n".format(count))
     for k,v in metadata.items():
@@ -519,7 +512,12 @@ with open("/projects/zephyr/Ruturaj/final_tool/test_cases/new_ghidra_text/" + os
         f.write("{} {} {} {}\n".format(str(int(var["address"], 16)), var["datatype"], var["owner"], var["size"]))
     f.write("\n")
 
+# for k,v in metadata.items():
+#     if k == ".global":
+#         continue
+#     for value in  v["namespace"]:
+#         value["address"] in
 
 # Another option is to store the data into a json format
-# with open("test.txt", "w") as f:
-#     json.dump(metadata, f)
+with open("test.txt", "w") as f:
+    json.dump(metadata, f)
