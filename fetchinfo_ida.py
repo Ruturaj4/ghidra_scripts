@@ -14,17 +14,17 @@ class Instruction:
         self.item = item
         self.ea = ea
     def get_address(self):
-        return hex(self.item)
+        return format(self.item, 'x')
     def get_disassembly(self):
         return idc.GetDisasm(self.item)
-    def get_operands(self):
-        ops = []
-        for i in range(6):
-            if self.ins[i].type != idaapi.o_void:
-                ops.append(self.ins[i])
-        return ops
+    def get_operand(self, n):
+        return idc.print_operand(self.item,n)
+    def get_operand_type(self, n):
+        return idc.get_operand_type(self.item, n)
     def get_decoded(self):
         return idautils.DecodeInstruction(self.item)
+    def get_mnemonic(self):
+        return ida_ua.ua_mnem(self.item)
 
 class Local_variable:
     def __init__(self, mem, stack_size, ea):
@@ -43,6 +43,10 @@ class Local_variable:
     def get_misc(self):
         return self.mem.id
     def get_type(self):
+        tif = ida_typeinf.tinfo_t()
+        success = ida_struct.get_member_tinfo(tif, self.mem)
+        return tif.get_realtype()
+    def get_ownertype(self):
         tif = ida_typeinf.tinfo_t()
         success = ida_struct.get_member_tinfo(tif, self.mem)
         # if type information is available in Ida analysis
@@ -101,6 +105,8 @@ def get_local_vars(ea, stack_size):
 
 # instruction_map maps addresses to thier owners
 instruction_map = {}
+# global metadata
+metadata = {".global":[]}
 
 # save variable information with instruction mappings
 def printvariable(local_variables, function):
@@ -109,16 +115,22 @@ def printvariable(local_variables, function):
     for var in local_variables:
         # todo: structure vars
         name = var.get_name()
+        # ignore special names assigned by ida
+        if name == str(function) + "_" + " r" or name == str(function) + "_" + " o":
+            continue
         offset = var.get_offset()
         type = var.get_type()
+        ownertype = var.get_ownertype()
         size = var.get_size()
         print(name)
         for ref in var.get_refs():
-            print(hex(ref.ea))
-            instruction_map[str(function)][hex(ref.ea)]=name,type
+            print(format(ref.ea, 'x'))
+            instruction_map[str(function)][format(ref.ea, 'x')]=name,ownertype
+        metadata[str(function)]["variables"].append({"owner":name, \
+        "offset":offset, "dtype":str(type), "ownertype":str(ownertype), "size":size})
 
 def printowners(block_entry, block_exit, function, instructions):
-    print(hex(block_entry), hex(block_exit))
+    print(format(block_entry, 'x'), format(block_exit, 'x'))
     cur = block_entry
     # a dic of registers and pointers to be tracked
     regs = {}
@@ -128,8 +140,24 @@ def printowners(block_entry, block_exit, function, instructions):
             break
         if cur in instructions:
             ins = instructions[cur]
+            # ret if return instruction
+            if "retn" in str(ins.get_mnemonic()):
+                break
             print("{}: {}".format(ins.get_address(), ins.get_disassembly()))
-            
+            owner = ""
+            if format(cur, 'x') in instruction_map[str(function)]:
+                owner = instruction_map[str(function)][format(cur, 'x')][0]
+                ownertype = instruction_map[str(function)][format(cur, 'x')][1]
+                metadata[str(function)]["addresses"].append({"address":str(format(cur, 'x')), "owner":str(owner)})
+            # move instruction
+            if "mov" in str(ins.get_mnemonic()):
+                # print(ins.get_operand(0))
+                # print(ins.get_operand(1))
+                # detect 'mov reg reg' instruction
+                if ins.get_operand_type(0) == o_reg:
+                    if ins.get_operand_type(1) == o_reg:
+                        if owner:
+                            # regs[inst.getRegister(0).getBaseRegister()] = owner
         cur += 1
 
 for ea in idautils.Functions():
@@ -145,20 +173,33 @@ for ea in idautils.Functions():
     # print(dir(idc))
     # function stack size and boundaries
     stack_size = idc.get_func_attr(ea, idc.FUNCATTR_FRSIZE)
-    start = hex(idc.get_func_attr(ea, FUNCATTR_START))
-    end = hex(idc.get_func_attr(ea, FUNCATTR_END))
+    fun_entry = format(idc.get_func_attr(ea, FUNCATTR_START), 'x')
+    fun_exit = format(idc.get_func_attr(ea, FUNCATTR_END), 'x')
+    # instructions
+    instructions = {item:Instruction(item, ea) for item in idautils.FuncItems(ea)}
+
+    # check if rbp or rsp relative addressing
+    adjust_off = 0
+    if str(instructions[ea].get_disassembly()) == "push    rbp":
+        adjust_off = 8
+    if str(fun_name) in metadata:
+        # metadata[str(fun_name)]["rsp"] = str(adjust_off)
+        metadata[str(fun_name)]["entry"] = str(fun_entry).lstrip("0")
+        metadata[str(fun_name)]["exit"] = str(fun_exit).lstrip("0")
+    else:
+        # todo: add "rsp":str(adjust_off),
+        metadata[str(fun_name)] = {"variables":[], "addresses":[], "namespace":[], \
+        "rsp":str(adjust_off), "entry":str(fun_entry).lstrip("0"), "exit":str(fun_exit).lstrip("0")}
+
     # stack variables
     local_variables = get_local_vars(ea, stack_size)
     printvariable(local_variables, fun_name)
-    # instructions = []
-    # instructions
-    instructions = {item:Instruction(item, ea) for item in idautils.FuncItems(ea)}
     # iterate through static building blocks
     function = idaapi.get_func(ea)
     flowchart = idaapi.FlowChart(function)
     print("Function starting at 0x%x consists of %d basic blocks" % (function.start_ea, flowchart.size))
     for bb in flowchart:
-        printowners(bb.start_ea,bb.end_ea,fun_name, instructions)
+        printowners(bb.start_ea ,bb.end_ea, fun_name, instructions)
 
-print(instruction_map)
+print(metadata)
 idc.qexit(0)
