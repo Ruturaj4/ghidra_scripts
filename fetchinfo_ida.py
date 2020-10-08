@@ -118,7 +118,7 @@ def printvariable(local_variables, function):
         # todo: structure vars
         name = var.get_name()
         # ignore special names assigned by ida
-        if name == str(function) + "_" + " r" or name == str(function) + "_" + " o":
+        if name == str(function) + "_" + " r" or name == str(function) + "_" + " s":
             continue
         offset = var.get_offset()
         type = var.get_type()
@@ -166,11 +166,12 @@ def printowners(block_entry, block_exit, function, instructions):
                                 regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] = \
                                 regs[idaapi.get_reg_name(ins.get_operand_value(1), 8)]
                     # track register loads - 'mov reg mem'
-                    else:
+                    elif ins.get_operand_type(1) == o_displ:
                         if owner:
                             # if the register is 64-bit e.g. rax
                             # mov reg==64 mem
                             if ins.get_decoded().Op1.dtype == idaapi.dt_qword:
+                                # transfer the owner
                                 regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] = owner
                                 # if the owner is present then remove this instruction from our final file
                                 metadata[str(function)]["addresses"] = [x for x in metadata[str(function)]\
@@ -179,13 +180,64 @@ def printowners(block_entry, block_exit, function, instructions):
                             # if arithmentic pattern is not used then just continue
                             if "rbp" in ins.get_operand(1) or "rsp" in ins.get_operand(1):
                                 # number of operand objects are less than 3
-                                if not ins.get_decoded().Op2.specflag1:
-                                    if ins.get_decoded().Op1.dtype != idaapi.dt_qword:
-                                        regs.pop(idaapi.get_reg_name(ins.get_operand_value(0), 8), None)
-                                    cur = cur.next()
-                                    continue
-                            # todo: add flag logic
-                            
+                                # uncomment this if using prediction for variables
+                                # if not ins.get_decoded().Op2.specflag1:
+                                if ins.get_decoded().Op1.dtype != idaapi.dt_qword:
+                                    regs.pop(idaapi.get_reg_name(ins.get_operand_value(0), 8), None)
+                                cur += 1
+                                continue
+                            # if not ins.get_decoded().Op2.specflag1:
+                            if idaapi.get_reg_name(ins.get_decoded().Op2.phrase, 8) in regs:
+                                metadata[str(function)]["addresses"].append({"address":str(format(cur, 'x')),\
+                                "owner":str(regs[idaapi.get_reg_name(ins.get_decoded().Op2.phrase, 8)])})
+                                # remove the register from the pointer map
+                                # as the register may no longer contain a pointer
+                                regs.pop(idaapi.get_reg_name(ins.get_operand_value(0), 8), None)
+                                cur += 1
+                                continue
+                            # if register arithmetic with op1 objects greater than equal to 3 is used then
+                            # we may be able to predict the owner if not predicted already
+                            # if ins.get_decoded().Op2.specflag1:
+                            #     for v in metadata[str(function)]["variables"]:
+                            #         print(hex(v["offset"]))
+                    # track register loads - 'mov reg imm'
+                    elif ins.get_operand_type(1) == o_imm:
+                        if idaapi.get_reg_name(ins.get_operand_value(0), 8) in regs:
+                            regs.pop(idaapi.get_reg_name(ins.get_operand_value(0), 8), None)
+                else:
+                    if owner:
+                        # if the owner is scalar then remove this instruction from our final file
+                        if ownertype == "scalar":
+                            metadata[str(function)]["addresses"] = [x for x in metadata[str(function)]\
+                            ["addresses"] if x["address"] != str(format(cur, 'x'))]
+                    else:
+                        # track register loads - 'mov reg imm'
+                        if idaapi.get_reg_name(ins.get_decoded().Op1.phrase, 8) in regs:
+                            metadata[str(function)]["addresses"].append({"address":str(format(cur, 'x')),\
+                            "owner":str(regs[idaapi.get_reg_name(ins.get_decoded().Op1.phrase, 8)])})
+                            # remove the register from the pointer map
+                            # as the register may no longer contain a pointer
+                            cur += 1
+                            continue
+            # fld instruction
+            if "fld" in str(ins.get_mnemonic()):
+                # only consider instruction where access is used
+                if ins.get_operand(1):
+                    if idaapi.get_reg_name(ins.get_decoded().Op2.phrase, 8) in regs:
+                        metadata[str(function)]["addresses"].append({"address":str(format(cur, 'x')),\
+                        "owner":str(regs[idaapi.get_reg_name(ins.get_decoded().Op2.phrase, 8)])})
+            # lea instruction
+            if "lea" in str(ins.get_mnemonic()):
+                if owner:
+                    regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] = owner
+                else:
+                    if idaapi.get_reg_name(ins.get_decoded().Op2.phrase, 8) in regs:
+                        regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] =\
+                        idaapi.get_reg_name(ins.get_decoded().Op2.phrase, 8)
+            # call instruction
+            if "call" in str(ins.get_mnemonic()):
+                # void the registers as function calling convention may affect registers
+                regs = {}
         cur += 1
 
 for ea in idautils.Functions():
