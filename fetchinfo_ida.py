@@ -21,6 +21,8 @@ class Instruction:
         return idc.print_operand(self.item,n)
     def get_operand_type(self, n):
         return idc.get_operand_type(self.item, n)
+    def get_operand_value(self, n):
+        return idc.get_operand_value(self.item, n)
     def get_decoded(self):
         return idautils.DecodeInstruction(self.item)
     def get_mnemonic(self):
@@ -157,7 +159,33 @@ def printowners(block_entry, block_exit, function, instructions):
                 if ins.get_operand_type(0) == o_reg:
                     if ins.get_operand_type(1) == o_reg:
                         if owner:
-                            # regs[inst.getRegister(0).getBaseRegister()] = owner
+                            regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] = owner
+                            pass
+                        else:
+                            if idaapi.get_reg_name(ins.get_operand_value(1), 8) in regs:
+                                regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] = \
+                                regs[idaapi.get_reg_name(ins.get_operand_value(1), 8)]
+                    # track register loads - 'mov reg mem'
+                    else:
+                        if owner:
+                            # if the register is 64-bit e.g. rax
+                            # mov reg==64 mem
+                            if ins.get_decoded().Op1.dtype == idaapi.dt_qword:
+                                regs[idaapi.get_reg_name(ins.get_operand_value(0), 8)] = owner
+                                # if the owner is present then remove this instruction from our final file
+                                metadata[str(function)]["addresses"] = [x for x in metadata[str(function)]\
+                                ["addresses"] if x["address"] != str(format(cur, 'x'))]
+                        else:
+                            # if arithmentic pattern is not used then just continue
+                            if "rbp" in ins.get_operand(1) or "rsp" in ins.get_operand(1):
+                                # number of operand objects are less than 3
+                                if not ins.get_decoded().Op2.specflag1:
+                                    if ins.get_decoded().Op1.dtype != idaapi.dt_qword:
+                                        regs.pop(idaapi.get_reg_name(ins.get_operand_value(0), 8), None)
+                                    cur = cur.next()
+                                    continue
+                            # todo: add flag logic
+                            
         cur += 1
 
 for ea in idautils.Functions():
