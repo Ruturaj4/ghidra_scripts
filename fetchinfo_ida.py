@@ -63,10 +63,38 @@ class Local_variable:
         xrefs = ida_frame.xreflist_t()
         ida_frame.build_stkvar_xrefs(xrefs, ida_funcs.get_func(self.ea), self.mem)
         return xrefs
+    @property
+    def is_structure(self):
+        return True if ida_struct.get_sptr(self.mem) else False
+    # def get_member_ids(self, sid):
+    #     offset = 0
+    #     # detect upto 10 structure items
+    #     i = 10
+    #     while i:
+    #         mid = idc.get_member_id(sid, offset)
+    #         if mid != -1:
+    #             yield mid
+    #         offset = idc.get_next_offset(sid, offset)
+    #         i -= 1
+    # def get_member_xrefs(self):
+    #     sid = ida_struct.get_sptr(self.mem).id
+    #     for mid in self.get_member_ids(sid):
+    #         name = ida_struct.get_member_name(mid)
+    #         print(name)
+    #         for xref in idautils.XrefsTo(mid):
+    #             yield xref.frm
+    def get_struct_members(self):
+        struct_members = []
+        sid = ida_struct.get_sptr(self.mem).id
+        for mem in ida_struct.get_struc(sid).members:
+            struct_members.append(Struct_members(mem, self.stack_size, self.ea))
+        return struct_members
 
+class Struct_members(Local_variable):
+    pass
 # select functions for analysis
 functions = set()
-ignore_funs = []
+ignore_funs = ["printf", ".printf"]
 # get function callee information
 def generate_graph():
 	callees = dict()
@@ -110,6 +138,10 @@ instruction_map = {}
 # global metadata
 metadata = {".global":[]}
 
+# get global or static symbols
+def get_data_symbols():
+    idata_seg_selector = idc.selector_by_name(".data")
+
 # save variable information with instruction mappings
 def printvariable(local_variables, function):
     if str(function) not in instruction_map:
@@ -125,6 +157,22 @@ def printvariable(local_variables, function):
         ownertype = var.get_ownertype()
         size = var.get_size()
         print(name)
+        if var.is_structure:
+            # for xref in var.get_member_xrefs():
+            #     print(format(xref, 'x'))
+            for member in var.get_struct_members():
+                name = var.get_name()+"_"+member.get_name()
+                print(name)
+                offset = member.get_offset()
+                type = member.get_type()
+                ownertype = member.get_ownertype()
+                size = member.get_size()
+                for ref in member.get_refs():
+                    print(format(ref.ea, 'x'))
+                    instruction_map[str(function)][format(ref.ea, 'x')]=name,ownertype
+                metadata[str(function)]["variables"].append({"owner":name, \
+                "offset":offset, "dtype":str(type), "ownertype":str(ownertype), "size":size})
+            continue
         for ref in var.get_refs():
             print(format(ref.ea, 'x'))
             instruction_map[str(function)][format(ref.ea, 'x')]=name,ownertype
