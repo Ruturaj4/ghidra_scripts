@@ -13,7 +13,7 @@ import ida_hexrays
 idc.auto_wait()
 
 #set decompiler
-decompiler = 0
+decompiler = 1
 if decompiler:
     ida_hexrays.init_hexrays_plugin()
 
@@ -66,12 +66,16 @@ class Local_variable:
         success = ida_struct.get_member_tinfo(tif, self.mem)
         # if type information is available in Ida analysis
         if success:
-            if ida_typeinf.is_type_ptr_or_array(tif.get_realtype()):
+            if ida_typeinf.is_type_ptr_or_array(tif.get_realtype()) or self.get_size()>=8:
                 return "pointer"
             else:
                 return "scalar"
         # return type scalar by default
-        else: return "scalar"
+        else:
+            if self.get_size()>=8:
+                return "pointer"
+            else:
+                return "scalar"
     def get_refs(self):
         xrefs = ida_frame.xreflist_t()
         ida_frame.build_stkvar_xrefs(xrefs, ida_funcs.get_func(self.ea), self.mem)
@@ -218,13 +222,14 @@ def printvariable(local_variables, function):
     for var in local_variables:
         # todo: structure vars
         name = var.get_name()
-        # print(name)
+        print(name)
         # ignore special names assigned by ida
         if name == str(function) + "_" + " r" or name == str(function) + "_" + " s":
             continue
         offset = var.get_offset()
         type = var.get_type()
         ownertype = var.get_ownertype()
+        print(ownertype)
         size = var.get_size()
         if decompiler:
             if offset in hexrays_types[str(function)]:
@@ -376,7 +381,7 @@ def get_hexrays_vars(ea, stack_size):
     for var in ida_hexrays.decompile(ea).get_lvars():
         if not var.name:
             continue
-        if var.tif.is_ptr_or_array and var.width>=8:
+        if var.width>=8:
             ownertype = "pointer"
         else:
             ownertype = "scalar"
