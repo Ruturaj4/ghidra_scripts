@@ -1,4 +1,5 @@
 import sys
+import json
 import idc
 import idautils
 import idaapi
@@ -6,8 +7,15 @@ import ida_struct
 import ida_typeinf
 import ida_frame
 import ida_funcs
+import ida_bytes
+import ida_hexrays
 # wait for auto-analysis to complete
 idc.auto_wait()
+
+#set decompiler
+decompiler = 0
+if decompiler:
+    ida_hexrays.init_hexrays_plugin()
 
 class Instruction:
     def __init__(self, item, ea):
@@ -48,6 +56,11 @@ class Local_variable:
         tif = ida_typeinf.tinfo_t()
         success = ida_struct.get_member_tinfo(tif, self.mem)
         return tif.get_realtype()
+    @property
+    def is_array_type(self):
+        tif = ida_typeinf.tinfo_t()
+        success = ida_struct.get_member_tinfo(tif, self.mem)
+        return ida_typeinf.is_type_array(tif.get_realtype())
     def get_ownertype(self):
         tif = ida_typeinf.tinfo_t()
         success = ida_struct.get_member_tinfo(tif, self.mem)
@@ -91,26 +104,51 @@ class Local_variable:
         return struct_members
 
 class Struct_members(Local_variable):
-    pass
+    def get_refs(self):
+        for xref in idautils.XrefsTo(self.mem.id):
+            yield(xref)
+    def get_offset(self):
+        return self.mem.get_soff()
 # select functions for analysis
 functions = set()
 ignore_funs = ["printf", ".printf"]
 # get function callee information
+# def handle_function(func_start):
+#     for h in idautils.FuncItems(func_start):
+#         for r in idautils.XrefsFrom(h, 0):
+#             print(r.type)
+#             print(get_func_name(h), "--calls-->", get_func_name(r.to))
+
+# def generate_graph():
+#     callees = dict()
+#     # loop through all functions
+#     for function_ea in idautils.Functions():
+#         # handle_function(function_ea)
+#         f_name = idc.get_func_name(function_ea)
+# 		# For each of the incoming references
+#         for ref_ea in idautils.CodeRefsTo(function_ea, 0):
+#             # Get the name of the referring function
+#             caller_name = idc.get_func_name(ref_ea)
+#             # Add the current function to the list of functions
+#             # called by the referring function
+#             callees[str(caller_name)] = callees.get(str(caller_name), set())
+#             callees[str(caller_name)].add(str(f_name))
+#     return callees
+
 def generate_graph():
-	callees = dict()
-	# loop through all functions
-	for function_ea in idautils.Functions():
-		f_name = idc.get_func_name(function_ea)
-		# For each of the incoming references
-		for ref_ea in idautils.CodeRefsTo(function_ea, 0):
-			# Get the name of the referring function
-			caller_name = idc.get_func_name(ref_ea)
-			# Add the current function to the list of functions
-			# called by the referring function
-			callees[str(caller_name)] = callees.get(str(caller_name), set())
-			callees[str(caller_name)].add(str(f_name))
-	return callees
+    callees = {}
+    # loop through all functions
+    for function_ea in idautils.Functions():
+        f_name = idc.get_func_name(function_ea)
+        callees[str(f_name)] = set()
+        for h in idautils.FuncItems(function_ea):
+            for r in idautils.XrefsFrom(h, 0):
+                caller_name = idc.get_func_name(r.to)
+                callees[str(f_name)].add(str(caller_name))
+    return callees
+
 function_graph = generate_graph()
+# print(function_graph)
 # get all user defined/called functions
 def get_functions(func):
     if func not in functions:
@@ -138,9 +176,40 @@ instruction_map = {}
 # global metadata
 metadata = {".global":[]}
 
+def is_user_name(ea):
+  f = idc.get_full_flags(ea)
+  return idc.hasUserName(f)
 # get global or static symbols
 def get_data_symbols():
-    idata_seg_selector = idc.selector_by_name(".data")
+    idata_seg_selector = idc.selector_by_name(".bss")
+    idata_seg_startea = idc.get_segm_by_sel(idata_seg_selector)
+    idata_seg_endea = idc.get_segm_end(idata_seg_startea)
+    for seg_ea in range(idata_seg_startea, idata_seg_endea):
+        if idc.get_name(seg_ea):
+            address = format(seg_ea, 'x')
+            name = ".global"+"_"+idc.get_name(seg_ea)
+            size = idc.get_item_size(seg_ea)
+            dtype = ida_bytes.get_data_elsize(seg_ea, idc.get_full_flags(seg_ea))
+            if size == dtype == 8:
+                ownertype = "pointer"
+            elif size == dtype != 8:
+                ownertype = "scalar"
+            elif size > dtype:
+                ownertype = "array"
+            else:
+                continue
+            for xref in idautils.XrefsTo(seg_ea):
+                # print(format(xref.frm, 'x'))
+                function = idc.get_func_name(xref.frm)
+                # print(function)
+                if function not in functions:
+                    continue
+                # print(function)
+                if str(function) not in instruction_map:
+                    instruction_map[str(function)] = {}
+                instruction_map[str(function)][format(xref.frm, 'x')]=name,ownertype
+                # print("Found a cross reference {}: from {:x} to variable {}".format(xref, xref.frm, name))
+            metadata[".global"].append({"owner":name,"datatype":ownertype, "address":address, "size":size})
 
 # save variable information with instruction mappings
 def printvariable(local_variables, function):
@@ -149,6 +218,7 @@ def printvariable(local_variables, function):
     for var in local_variables:
         # todo: structure vars
         name = var.get_name()
+        # print(name)
         # ignore special names assigned by ida
         if name == str(function) + "_" + " r" or name == str(function) + "_" + " s":
             continue
@@ -156,25 +226,34 @@ def printvariable(local_variables, function):
         type = var.get_type()
         ownertype = var.get_ownertype()
         size = var.get_size()
-        print(name)
-        if var.is_structure:
+        if decompiler:
+            if offset in hexrays_types[str(function)]:
+                size, ownertype = hexrays_types[str(function)][offset]
+        # print(name)
+        if var.is_structure and not var.is_array_type:
             # for xref in var.get_member_xrefs():
             #     print(format(xref, 'x'))
             for member in var.get_struct_members():
                 name = var.get_name()+"_"+member.get_name()
-                print(name)
-                offset = member.get_offset()
+                # print(name)
+                offset = var.get_offset() + member.get_offset()
+                # print(offset)
                 type = member.get_type()
                 ownertype = member.get_ownertype()
+                # print(ownertype)
                 size = member.get_size()
+                # print(size)
+                if decompiler:
+                    if offset in hexrays_types[str(function)]:
+                        size, ownertype = hexrays_types[str(function)][offset]
                 for ref in member.get_refs():
-                    print(format(ref.ea, 'x'))
-                    instruction_map[str(function)][format(ref.ea, 'x')]=name,ownertype
+                    # print(format(ref.frm, 'x'))
+                    instruction_map[str(function)][format(ref.frm, 'x')]=name,ownertype
                 metadata[str(function)]["variables"].append({"owner":name, \
                 "offset":offset, "dtype":str(type), "ownertype":str(ownertype), "size":size})
             continue
         for ref in var.get_refs():
-            print(format(ref.ea, 'x'))
+            # print(format(ref.ea, 'x'))
             instruction_map[str(function)][format(ref.ea, 'x')]=name,ownertype
         metadata[str(function)]["variables"].append({"owner":name, \
         "offset":offset, "dtype":str(type), "ownertype":str(ownertype), "size":size})
@@ -288,14 +367,39 @@ def printowners(block_entry, block_exit, function, instructions):
                 regs = {}
         cur += 1
 
+hexrays_types = {}
+
+# get hex rays variables
+def get_hexrays_vars(ea, stack_size):
+    # can be used to get member size, type, etc.
+    hexrays_types[idc.get_func_name(ea)] = {}
+    for var in ida_hexrays.decompile(ea).get_lvars():
+        if not var.name:
+            continue
+        if var.tif.is_ptr_or_array and var.width>=8:
+            ownertype = "pointer"
+        else:
+            ownertype = "scalar"
+        # print(dir(var.tif))
+        offset = -stack_size + var.get_stkoff()
+        hexrays_types[idc.get_func_name(ea)][offset] = var.width, ownertype
+        # print(dir(var))
+
+# get global variables
+get_data_symbols()
+
 for ea in idautils.Functions():
     if not str(idc.get_func_name(ea)) in functions:
         continue
+        # print(dir(va))
+    # print(ida_hexrays.decompile(ea).arguments)
     # check if library function
     if not idc.get_segm_name(ea) == ".text":
         continue
     if idc.get_func_flags(ea) & FUNC_LIB:
         continue
+    if decompiler:
+        get_hexrays_vars(ea, idc.get_func_attr(ea, idc.FUNCATTR_FRSIZE))
     # function name
     fun_name = idc.get_func_name(ea)
     # print(dir(idc))
@@ -325,9 +429,42 @@ for ea in idautils.Functions():
     # iterate through static building blocks
     function = idaapi.get_func(ea)
     flowchart = idaapi.FlowChart(function)
-    print("Function starting at 0x%x consists of %d basic blocks" % (function.start_ea, flowchart.size))
+    # print("Function starting at 0x%x consists of %d basic blocks" % (function.start_ea, flowchart.size))
     for bb in flowchart:
         printowners(bb.start_ea ,bb.end_ea, fun_name, instructions)
 
 print(metadata)
+path, file = os.path.split(idaapi.get_input_file_path())
+
+# Now create a file to render it to the pintool
+with open(os.path.join(path, os.path.splitext(file)[0]) + ".idatext", "w") as f:
+    count = len(metadata) - 1
+    f.write("{}\n".format(count))
+    for k,v in metadata.items():
+        if k == ".global":
+            continue
+        f.write("{}\n".format(k))
+        f.write("{}\n".format(v["rsp"]))
+        f.write("{}\n".format(v["entry"]))
+        f.write("{}\n".format(v["exit"]))
+        f.write("{}\n".format("addresses"))
+        for add in [dict(t) for t in {tuple(d.items()) for d in v["addresses"]}]:
+            f.write("{} ".format(add["address"]))
+            f.write("{}\n".format(add["owner"]))
+        f.write("\n")
+        f.write("{}\n".format("locals"))
+        for var in v["variables"]:
+            f.write("{} {} {} {}\n".format(var["offset"], var["ownertype"], var["owner"], var["size"]))
+        f.write("\n")
+        f.write("{}\n".format("namespace"))
+        for var in v["namespace"]:
+            f.write("{} {} {} {}\n".format(str(int(var["address"], 16)), var["datatype"], var["owner"], var["size"]))
+        f.write("\n")
+    f.write(".global\n")
+    for var in metadata[".global"]:
+        f.write("{} {} {} {}\n".format(str(int(var["address"], 16)), var["datatype"], var["owner"], var["size"]))
+    f.write("\n")
+
+with open(os.path.join(path, os.path.splitext(file)[0])+ ".idajson", "w") as f:
+    json.dump(metadata, f)
 idc.qexit(0)
